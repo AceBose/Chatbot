@@ -7,8 +7,6 @@ from statemachine import StateMachine, State
 import sys
 
 
-
-
 initial_outreaches = ["Hi", "Hello", "Hey there", "Howdy", "Yoooo", "Yo", "Hey", "Welcome"]
 secondary_outreaches = ["Hello???", "Anyone there???", "Hiii", "Hellooo", "I said hi", "excuse me???"]
 frustrated_phrases = ["Screw you!", "Well, bye then", "Whatever, fine. Don't answer", "Ugh ok, bye",
@@ -31,6 +29,8 @@ get_next_response = lambda utterance: random.choice(pairs_response[utterance])
 
 # travel rec stuff
 import travelRecs as trav
+import pandas as pd
+
 travel_time_questions = ["When are you leaving?",
                          "When would you like to travel?",
                          "What time are you thinking of going?",
@@ -263,7 +263,7 @@ class ChatBot:  # init here
         return False
 
     def recommend_travel(self, _text):
-        if not self.travel_df:
+        if not isinstance(self.travel_df, pd.DataFrame):
             # this takes a bit maybe warn user?
             # self.irc.send_dm(self.channel, self.target, 'Let me think a bit.')
             self.travel_df = trav.get_travel_df()
@@ -281,9 +281,11 @@ class ChatBot:  # init here
         month_options = self.travel_df.loc[self.travel_df.loc[:, "Month"] == 'january', :]
         temp_index = (month_options['Low Temp'] <= self.travel_temp) &\
                      (month_options['High Temp'] >= self.travel_temp)
-        final_options = month_options.loc[temp_index, "Town"]
+        final_options = list(month_options.loc[temp_index, "Town"])
+        print(f"options: {final_options}")
         if len(final_options) == 0:
-            final_options = month_options.loc[:, "Town"]
+            final_options = list(month_options.loc[:, "Town"])
+
         travel_place = random.choice(final_options)
         recommendation = random.choice(travel_recs).format(place=travel_place.strip(),
                                                            month=self.travel_month.title())
