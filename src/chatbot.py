@@ -7,6 +7,8 @@ from statemachine import StateMachine, State
 import sys
 
 
+
+
 initial_outreaches = ["Hi", "Hello", "Hey there", "Howdy", "Yoooo", "Yo", "Hey", "Welcome"]
 secondary_outreaches = ["Hello???", "Anyone there???", "Hiii", "Hellooo", "I said hi", "excuse me???"]
 frustrated_phrases = ["Screw you!", "Well, bye then", "Whatever, fine. Don't answer", "Ugh ok, bye",
@@ -26,6 +28,30 @@ pairs_response = {
 
 get_next_outreach = lambda utterance: random.choice(pairs_outreach[utterance])
 get_next_response = lambda utterance: random.choice(pairs_response[utterance])
+
+# travel rec stuff
+import travelRecs as trav
+travel_time_questions = ["When are you leaving?",
+                         "When would you like to travel?",
+                         "What time are you thinking of going?",
+                         "When are you free to fly?"]
+
+travel_temp_questions = ["How hot do you like it?",
+                         "What temperature are you looking for?",
+                         "What's the weather you're looking for?"]
+
+travel_guess = ["OK, I'll take a guess then.",
+                "Well that isn't helpful, but I can take a shot in the dark.",
+                "Alright, let me choose some of my favorites."]
+
+travel_recs = ["I've heard {place} is great in {month}!",
+               "If you're traveling in {month}, head to {place}!",
+               "When {month} comes around, visit {place}!",
+               "I'd recommend {place}, during the month of {month}."]
+
+temp_words = {
+    "hot": 85, "cold": 50, "warm": 75, "cool": 65, "chilly": 55, "toasty": 85,
+}
 
 
 def main():
@@ -86,12 +112,15 @@ class ChatBot:  # init here
         self.channel = channel
         self.botnick = botnick if "-bot" in botnick[-4:] else botnick + "-bot"
         self.irc = IRCSocket()
-        self.irc.connect(server, channel, botnick)
+        self.irc.connect(server, channel, self.botnick)
         self.user_text = ""
         self.retries = 0
         self.spoke_first = None
         self.sent_forget = False
         self.seconds_passed = 0
+        self.travel_month = ""
+        self.travel_temp = 0
+        self.travel_df = None
 
     def init_bot(self):
         while True:
@@ -216,14 +245,94 @@ class ChatBot:  # init here
         return False
 
     def check_unique_question_clay(self, _text):
-        # asks travel recommendation -> bot asks what weather you like -> user gives weather -> bot asks what activities
-        # -> users sends activities -> bot sends final recommendation
+        # asks travel recommendation -> bot asks when you want to visit -> user gives time -> bot asks what temperature
+        # -> users sends temperature -> bot sends final recommendation
+        travel_words = ["travel", "go", "fly", 'explore', "visit"]
+        question_start = ["where", "what"]
+        processed_text = ChatBot.remove_conjunctions(_text).lower()
+        for start in question_start:
+            for nxt in travel_words:
+                if start and nxt in processed_text:
+                    return True
+
         return False
 
     def check_unique_question_archit(self, _text):
         # asks recipe or ingredients in food -> bot gives recipe -> user asked for ingredients
         # -> bot returns ingredients
         return False
+
+    def recommend_travel(self, _text):
+        if not self.travel_df:
+            # this takes a bit maybe warn user?
+            # self.irc.send_dm(self.channel, self.target, 'Let me think a bit.')
+            self.travel_df = trav.get_travel_df()
+
+        self.get_travel_time(_text)
+        self.get_travel_temp(_text)
+
+        if not self.travel_month:
+            self.prompt_for_travel_time()
+
+        if not self.travel_temp:
+            self.prompt_for_travel_temp()
+
+        # make recommendations
+        month_options = self.travel_df.loc[self.travel_df.loc[:, "Month"] == 'january', :]
+        temp_index = (month_options['Low Temp'] <= self.travel_temp) &\
+                     (month_options['High Temp'] >= self.travel_temp)
+        final_options = month_options.loc[temp_index, "Town"]
+        if len(final_options) == 0:
+            final_options = month_options.loc[:, "Town"]
+        travel_place = random.choice(final_options)
+        recommendation = random.choice(travel_recs).format(place=travel_place.strip(),
+                                                           month=self.travel_month.title())
+        self.irc.send_dm(self.channel, self.target, recommendation)
+
+    def prompt_for_travel_time(self):
+        self.irc.send_dm(self.channel, self.target, random.choice(travel_time_questions))
+        self.wait_for_text(self.random_travel_time, self.get_travel_time_user_text)
+
+    def prompt_for_travel_temp(self):
+        self.irc.send_dm(self.channel, self.target, random.choice(travel_temp_questions))
+        self.wait_for_text(self.random_travel_temp, self.get_travel_temp_user_text)
+
+    def get_travel_time_user_text(self):
+        self.get_travel_time(self.user_text, take_guess=True)
+
+    def get_travel_temp_user_text(self):
+        self.get_travel_temp(self.user_text, take_guess=True)
+
+    def get_travel_time(self, _text, take_guess=False):
+        for month in trav.months.keys():
+            if month in _text:
+                self.travel_month = month
+        for season in trav.seasons.keys():
+            if season in _text:
+                self.travel_month = random.choice(trav.seasons[season])
+
+        if not self.travel_month and take_guess:
+            self.random_travel_time()
+
+    def get_travel_temp(self, _text, take_guess=False):
+        words = nltk.word_tokenize(_text)
+        for word in words:
+            if word in temp_words.keys():
+                self.travel_temp = temp_words[word]
+            if word.isdigit():
+                self.travel_temp = int(word)
+
+        if not self.travel_temp and take_guess:
+            self.random_travel_temp()
+
+    def random_travel_time(self):
+        self.irc.send_dm(self.channel, self.target, random.choice(travel_guess))
+        self.travel_month = random.choice(trav.months.keys())
+
+    def random_travel_temp(self):
+        self.irc.send_dm(self.channel, self.target, random.choice(travel_guess))
+        self.travel_temp = random.choice(list(temp_words.values()))
+
 
     def run_bot(self):
         while True:
@@ -270,6 +379,7 @@ class ChatBot:  # init here
             self.bot_state.restart()
         elif self.check_unique_question_clay(self.user_text):
             # fill in with logic to try unique functionality
+            self.recommend_travel(self.user_text)
             self.bot_state.restart()
         elif self.check_unique_question_archit(self.user_text):
             # fill in with logic to try unique functionality
